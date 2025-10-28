@@ -28,12 +28,82 @@
     detailPanel: document.getElementById("detail-panel"),
     canvas: document.getElementById("pie-canvas"),
     meta: document.getElementById("detail-meta"),
-    btnInvalid: document.getElementById("btn-invalid"),
-    btnValid: document.getElementById("btn-valid"),
-    btnMissing: document.getElementById("btn-missing"),
-    btnTopNames: document.getElementById("btn-topnames"),
+    actions: document.getElementById("actions"),
     btnShowList: document.getElementById("btn-show-list"),
   };
+
+  // --- SQL action configuration ---
+  function buildWhere(row) {
+    if (!row) return "1=0";
+    if (STATE.activeTab === "publisher") {
+      return `publishingOrgKey = '${row.key}'`;
+    } else if (STATE.activeTab === "hosting") {
+      return `hostingOrganizationKey = '${row.key}'`;
+    } else if (STATE.activeTab === "node") {
+      const node = (STATE.nodes || []).find(n => String(n.nodeKey) === String(row.key));
+      const orgKeys = (node?.organizations || []).map(o => `'${o.key}'`);
+      return orgKeys.length ? `publishingOrgKey IN (${orgKeys.join(",")})` : "1=0";
+    }
+    return "1=1";
+  }
+
+  function buildValidPredicate() {
+    return `(${[
+      "GBIF_StringArrayLike(recordedByID, 'https://orcid.org/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'http://orcid.org/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'https://scholar.google.com/citations?user=*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'http://scholar.google.com/citations?user=*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'https://www.researcherid.com/rid/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'http://www.researcherid.com/rid/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'https://www.wikidata.org/entity/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'http://www.wikidata.org/entity/*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'https://www.linkedin.com/profile/view?id=*', FALSE)",
+      "GBIF_StringArrayLike(recordedByID, 'http://www.linkedin.com/profile/view?id=*', FALSE)",
+    ].join(" OR ")})`;
+  }
+
+  function getSelectCols() {
+    return [
+      "datasetName",
+      "datasetKey AS datasetId",
+      "occurrenceID",
+      "recordedBy",
+      "recordedByID",
+      "publisher",
+      "publishingOrgKey"
+    ].join(", ");
+  }
+
+  const ACTIONS = [
+    {
+      id: "invalid",
+      label: "Invalid recordedByID",
+      className: "danger",
+      description: "Records where recordedByID exists but does not match known identifier patterns (ORCID, Google Scholar, ResearcherID, Wikidata, LinkedIn).",
+      buildSql: (row) => {
+        const where = buildWhere(row);
+        const validPredicate = buildValidPredicate();
+        return `SELECT ${getSelectCols()} FROM occurrence WHERE ${where} AND recordedByID IS NOT NULL AND NOT ${validPredicate}`;
+      },
+    },
+    {
+      id: "topnames",
+      label: "Top recordedBy names (no recordedByID)",
+      className: "secondary",
+      description: "Most frequent collector names without any recordedByID for the current selection — a \"most wanted\" list to target for disambiguation.",
+      buildSql: (row) => {
+        const where = buildWhere(row);
+        return (
+          `SELECT CONCAT_WS(' | ', recordedBy) AS recordedBy_names, COUNT(*) AS occurrences\n` +
+          `FROM occurrence\n` +
+          `WHERE ${where} AND recordedByID IS NULL AND recordedBy IS NOT NULL\n` +
+          `GROUP BY recordedBy_names\n` +
+          `ORDER BY occurrences DESC, recordedBy_names ASC\n` +
+          `LIMIT 200`
+        );
+      },
+    },
+  ];
 
   function parseNumber(value) {
     if (value === null || value === undefined) return 0;
@@ -210,61 +280,36 @@
     parts.push(`<span>With recordedById: ${row.records_with_recordedbyid.toLocaleString()} (${row.pct_with_recordedbyid.toFixed(2)}%)</span>`);
     els.meta.innerHTML = parts.join(" • ");
 
-    updateActionLinks(row);
+    renderActions(row);
   }
 
-  function updateActionLinks(row) {
-    let where = "1=1";
-    if (STATE.activeTab === "publisher") {
-      where = `publishingOrgKey = '${row.key}'`;
-    } else if (STATE.activeTab === "hosting") {
-      where = `hostingOrganizationKey = '${row.key}'`;
-    } else if (STATE.activeTab === "node") {
-      // Build IN (...) from nodes.json
-      const node = (STATE.nodes || []).find(n => String(n.nodeKey) === String(row.key));
-      const orgKeys = (node?.organizations || []).map(o => `'${o.key}'`);
-      where = orgKeys.length ? `publishingOrgKey IN (${orgKeys.join(",")})` : "1=0";
-    }
+  function renderActions(row) {
+    if (!els.actions) return;
+    els.actions.innerHTML = "";
+    ACTIONS.forEach(action => {
+      const sql = action.buildSql(row);
+      const href = buildGbifSqlUrl(sql);
+      const wrap = document.createElement("div");
+      wrap.className = "action";
 
-    const validPredicate = `(${[
-      "GBIF_StringArrayLike(recordedByID, 'https://orcid.org/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'http://orcid.org/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'https://scholar.google.com/citations?user=*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'http://scholar.google.com/citations?user=*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'https://www.researcherid.com/rid/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'http://www.researcherid.com/rid/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'https://www.wikidata.org/entity/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'http://www.wikidata.org/entity/*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'https://www.linkedin.com/profile/view?id=*', FALSE)",
-      "GBIF_StringArrayLike(recordedByID, 'http://www.linkedin.com/profile/view?id=*', FALSE)",
-    ].join(" OR ")})`;
+      const head = document.createElement("div");
+      head.className = "action-head";
+      const link = document.createElement("a");
+      link.className = `btn ${action.className || ''}`.trim();
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noreferrer noopener";
+      link.textContent = action.label;
+      head.appendChild(link);
 
-    const selectCols = [
-      "datasetName",
-      "datasetKey AS datasetId",
-      "occurrenceID",
-      "recordedBy",
-      "recordedByID",
-      "publisher",
-      "publishingOrgKey"
-    ].join(", ");
+      const desc = document.createElement("div");
+      desc.className = "action-desc";
+      desc.textContent = action.description;
 
-    const sqlInvalid = `SELECT ${selectCols} FROM occurrence WHERE ${where} AND recordedByID IS NOT NULL AND NOT ${validPredicate}`;
-    const sqlValid = `SELECT ${selectCols} FROM occurrence WHERE ${where} AND ${validPredicate}`;
-    const sqlMissing = `SELECT ${selectCols} FROM occurrence WHERE ${where} AND recordedByID IS NULL`;
-
-    const sqlTopNames =
-      `SELECT CONCAT_WS(' | ', recordedBy) AS recordedBy_names, COUNT(*) AS occurrences\n` +
-      `FROM occurrence\n` +
-      `WHERE ${where} AND recordedByID IS NULL AND recordedBy IS NOT NULL\n` +
-      `GROUP BY recordedBy_names\n` +
-      `ORDER BY occurrences DESC, recordedBy_names ASC\n` +
-      `LIMIT 200`;
-
-    els.btnInvalid.href = buildGbifSqlUrl(sqlInvalid);
-    els.btnValid.href = buildGbifSqlUrl(sqlValid);
-    els.btnMissing.href = buildGbifSqlUrl(sqlMissing);
-    if (els.btnTopNames) els.btnTopNames.href = buildGbifSqlUrl(sqlTopNames);
+      wrap.appendChild(head);
+      wrap.appendChild(desc);
+      els.actions.appendChild(wrap);
+    });
   }
 
   function buildGbifSqlUrl(sql) {
@@ -373,12 +418,6 @@
     els.tabNode.addEventListener("click", () => setActiveTab("node"));
     els.search.addEventListener("input", () => renderList());
     els.sort.addEventListener("change", () => renderList());
-    [els.btnInvalid, els.btnValid, els.btnMissing, els.btnTopNames].forEach(a => a && a.addEventListener('click', (e) => {
-      // ensure href is present; if not (no selection yet), prevent navigation
-      if (!e.currentTarget.href || e.currentTarget.href.endsWith('#')) {
-        e.preventDefault();
-      }
-    }));
 
     if (els.btnShowList) {
       els.btnShowList.addEventListener('click', () => {
