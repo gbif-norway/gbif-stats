@@ -25,12 +25,14 @@
     search: document.getElementById("search-input"),
     sort: document.getElementById("sort-select"),
     list: document.getElementById("entity-list"),
+    detailPanel: document.getElementById("detail-panel"),
     canvas: document.getElementById("pie-canvas"),
     meta: document.getElementById("detail-meta"),
     btnInvalid: document.getElementById("btn-invalid"),
     btnValid: document.getElementById("btn-valid"),
     btnMissing: document.getElementById("btn-missing"),
     btnTopNames: document.getElementById("btn-topnames"),
+    btnShowList: document.getElementById("btn-show-list"),
   };
 
   function parseNumber(value) {
@@ -147,6 +149,11 @@
     sortRows(rows, sortKey, sortDir);
     STATE.filtered = rows;
 
+    // If current selection is filtered out or belongs to another tab, clear it
+    if (STATE.selection && !rows.some(r => r.key === STATE.selection.key)) {
+      STATE.selection = null;
+    }
+
     els.list.innerHTML = "";
     rows.forEach((r, idx) => {
       const item = document.createElement("div");
@@ -180,9 +187,7 @@
       els.list.appendChild(item);
     });
 
-    if (!STATE.selection && rows.length) {
-      selectRow(rows[0]);
-    }
+    updateVisibility();
   }
 
   function selectRow(row) {
@@ -193,6 +198,8 @@
 
     renderChart(row);
     renderMeta(row);
+
+    updateVisibility(true /* fromSelection */);
   }
 
   function renderMeta(row) {
@@ -354,6 +361,9 @@
     els.tabPublisher.classList.toggle("active", tab === "publisher");
     els.tabHosting.classList.toggle("active", tab === "hosting");
     els.tabNode.classList.toggle("active", tab === "node");
+    // Clear selection on tab change and show list again on mobile
+    STATE.selection = null;
+    els.list.classList.remove("collapsed");
     renderList();
   }
 
@@ -369,6 +379,38 @@
         e.preventDefault();
       }
     }));
+
+    if (els.btnShowList) {
+      els.btnShowList.addEventListener('click', () => {
+        els.list.classList.remove('collapsed');
+        els.list.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }
+
+  function updateVisibility(fromSelection = false) {
+    const hasSelection = !!STATE.selection;
+    if (!hasSelection) {
+      // Hide detail when nothing selected
+      els.detailPanel.classList.add('hidden');
+      els.list.classList.remove('collapsed');
+      return;
+    }
+
+    // Show detail
+    els.detailPanel.classList.remove('hidden');
+
+    // On small screens, collapse the list and scroll the detail into view
+    const isNarrow = window.matchMedia('(max-width: 900px)').matches;
+    if (isNarrow) {
+      els.list.classList.add('collapsed');
+      if (fromSelection) {
+        // Wait a tick to allow layout to update before scrolling
+        setTimeout(() => {
+          els.detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 0);
+      }
+    }
   }
 
   function loadCsv(path, normalizeFn, configOverrides = {}) {
@@ -403,6 +445,7 @@
       STATE.data.node = nodeAggRows;
       STATE.nodes = nodesJson;
       renderList();
+      updateVisibility();
     } catch (e) {
       console.error("Failed to load CSVs", e);
       els.list.innerHTML = `<div style="padding:12px;color:#f88">Failed to load CSVs. Check paths in scripts/app.js.</div>`;

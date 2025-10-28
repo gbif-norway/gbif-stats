@@ -46,7 +46,10 @@
         <aside class="list" id="entity-list" aria-label="Publishers or hosting orgs list">
           <!-- Populated by JS -->
         </aside>
-        <section class="detail" id="detail-panel">
+        <section class="detail hidden" id="detail-panel">
+          <div class="toolbar">
+            <button id="btn-show-list" class="btn secondary" type="button">Show list</button>
+          </div>
           <div class="chart-wrap">
             <canvas id="pie-canvas" aria-label="Distribution pie chart"></canvas>
           </div>
